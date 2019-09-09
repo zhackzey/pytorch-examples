@@ -106,7 +106,7 @@ with torch.no_grad():
         c = (predictions == labels).squeeze()
         for i in range(4):
             label = labels[i]
-            class_correct[label] += c[i].item 
+            class_correct[label] += c[i].item()
             class_total[label] += 1 
 
 for i in range(10):
