@@ -29,7 +29,7 @@ data_transforms = {
 
 data_dir = 'data/hymenoptera_data'
 image_datasets = {x : datasets.ImageFolder(os.path.join(data_dir, x),data_transforms[x]) for x in ['train','val']}
-dataloaders = {x : torch.utils.data.DataLoader(image_datasets[x],batch_size = 4, shuffle =True, num_workers = 4) for x in['train','val']}
+dataloaders = {x : torch.utils.data.DataLoader(image_datasets[x],batch_size = 4, shuffle =True, num_workers = 0) for x in['train','val']}
 
 dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
 class_names = image_datasets['train'].classes
@@ -65,8 +65,8 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
 
         for phase in ['train', 'val']:
             if phase == 'train':
-                scheduler.step()
                 model.train()
+                
             else:
                 model.eval()
 
@@ -98,6 +98,8 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 best_acc = epoch_acc
                 best_model_wts = copy.deepcopy(model.state_dict())
         print()
+        scheduler.step()
+
 
     time_elapsed = time.time() - since
     print("Training complete in {:.0f}m {:.0f}s".format(time_elapsed // 60,time_elapsed %60))
@@ -138,6 +140,8 @@ def visualize_model(model,num_images = 6):
                     return
         model.train(mode = was_training)
 
+
+'''
 ################################################################
 # Finetuning the convnet
 # load a pretrained model and reset final fully connected layer
@@ -149,6 +153,8 @@ model_ft = model_ft.to(device)
 
 criterion = nn.CrossEntropyLoss()
 
+
+
 optimizer_ft = optim.SGD(model_ft.parameters(),lr = 0.001,momentum = 0.9)
 
 #Decay LR by a factor of 0.1 every 7 epochs
@@ -157,7 +163,59 @@ exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft,step_size = 7, gamma = 0.1)
 ################################################################
 # Train and evaluate
 model_ft  = train_model(model_ft,criterion,optimizer_ft, exp_lr_scheduler,num_epochs=25)
+#model_ft  = train_model(model_ft,criterion,optimizer_ft, None,num_epochs=25)
 
 visualize_model(model_ft)
 
-#model_conv = torchvision.models.res
+'''
+######################################################################
+# ConvNet as fixed feature extractor
+# ----------------------------------
+#
+# Here, we need to freeze all the network except the final layer. We need
+# to set ``requires_grad == False`` to freeze the parameters so that the
+# gradients are not computed in ``backward()``.
+#
+# You can read more about this in the documentation
+# `here <http://pytorch.org/docs/notes/autograd.html#excluding-subgraphs-from-backward>`__.
+#
+
+model_conv = torchvision.models.resnet18(pretrained=True)
+for param in model_conv.parameters():
+    param.requires_grad = False
+
+# Parameters of newly constructed modules have requires_grad=True by default
+num_ftrs = model_conv.fc.in_features
+model_conv.fc = nn.Linear(num_ftrs, 2)
+
+model_conv = model_conv.to(device)
+
+criterion = nn.CrossEntropyLoss()
+
+# Observe that only parameters of final layer are being optimized as
+# opoosed to before.
+optimizer_conv = optim.SGD(model_conv.fc.parameters(), lr=0.001, momentum=0.9)
+
+# Decay LR by a factor of 0.1 every 7 epochs
+exp_lr_scheduler = lr_scheduler.StepLR(optimizer_conv, step_size=7, gamma=0.1)
+
+
+######################################################################
+# Train and evaluate
+# ^^^^^^^^^^^^^^^^^^
+#
+# On CPU this will take about half the time compared to previous scenario.
+# This is expected as gradients don't need to be computed for most of the
+# network. However, forward does need to be computed.
+#
+
+model_conv = train_model(model_conv, criterion, optimizer_conv,
+                         exp_lr_scheduler, num_epochs=25)
+
+######################################################################
+#
+
+visualize_model(model_conv)
+
+plt.ioff()
+plt.show()
