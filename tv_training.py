@@ -2,10 +2,15 @@ import os
 import numpy as np
 import torch
 from PIL import Image
-import torchvision.transforms as T
+
 import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
+
+import transforms as T
+
+from engine import train_one_epoch, evaluate
+import utils
 
 class PennFudanDataset(object):
     def __init__(self,root,transforms):
@@ -32,7 +37,7 @@ class PennFudanDataset(object):
         num_objs = len(obj_ids)
         boxes = []
         for i in range(num_objs):
-            pos = np.where(mask[i])
+            pos = np.where(masks[i])
             xmin = np.min(pos[1])
             ymin = np.min(pos[0])
             xmax = np.max(pos[1])
@@ -79,3 +84,51 @@ def get_model_instance_segmentation(num_classes):
     # and replace the mask predictor with a new one
     model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask,hidden_layer,num_classes)
     return model
+
+def get_transform(train):
+    transforms = []
+    transforms.append(T.ToTensor())
+    if train:
+        transforms.append(T.RandomHorizontalFlip(0.5))
+    return T.Compose(transforms)
+
+
+def main():
+    # train on GPU or on CPU
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+    # our dataset has two classes only - background and person
+    num_classes = 2
+    # use our dataset and defined transformations
+    dataset  = PennFudanDataset('data/PennFudanPed',get_transform(train=True))
+    dataset_test = PennFudanDataset('data/PennFudanPed',get_transform(train=False))
+
+    # split dataset into train and test  set
+    indices = torch.randperm(len(dataset)).tolist()
+    dataset = torch.utils.data.Subset(dataset,indices[:-50])
+    dataset_test = torch.utils.data.Subset(dataset_test, indices[-50:])
+
+    data_loader = torch.utils.data.DataLoader(
+        dataset,batch_size = 2,shuffle = True, num_workers = 4,
+        collate_fn = utils.collate_fn
+    )
+
+    data_loader_test = torch.utils.data.DataLoader(
+        dataset_test, batch_size = 1, shuffle = False, num_workers = 0,
+        collate_fn = utils.collate_fn
+    )
+
+    model = get_model_instance_segmentation(num_classes)
+    model.to(device)
+    params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.SGD(params,lr = 0.005,momentum=0.9,weight_decay = 0.0005)
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer,step_size = 3,gamma = 0.1)
+
+    num_epochs = 10
+    for epoch in range(num_epochs):
+        train_one_epoch(model, optimizer, data_loader, device, epoch,print_freq = 10)
+        lr_scheduler.step()
+        evaluate(model,data_loader_test,device = device)
+
+if __name__ == "__main__":
+    main()
